@@ -172,21 +172,18 @@ print("=" * 50)
 print("Perbandingan Serial vs CUDA")
 print("=" * 50)
 
-# Serial
 print("\n[1/2] Menjalankan Serial...")
 t_serial, out_serial = run_and_time(
     f"./kmeans_serial {DATA} {K} {ITERS} {ROWS}")
 print(out_serial[-500:])  # tampilkan 500 char terakhir
 print(f"  → Waktu total: {t_serial:.2f}s")
 
-# CUDA
 print("\n[2/2] Menjalankan CUDA...")
 t_cuda, out_cuda = run_and_time(
     f"./kmeans_cuda {DATA} {K} {ITERS} {ROWS}")
 print(out_cuda[-500:])
 print(f"  → Waktu total: {t_cuda:.2f}s")
 
-# Hasil
 print("\n" + "=" * 50)
 print(f"  Serial : {t_serial:.2f}s")
 print(f"  CUDA   : {t_cuda:.2f}s")
