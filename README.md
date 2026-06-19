@@ -144,24 +144,6 @@ make experiment_weak
 
 ### Eksperimen 3: GPU vs CPU
 
-```bash
-make experiment_gpu
-# Menghasilkan: experiments/results/nvprof_report.txt
-```
-
-Profiling manual:
-```bash
-# nvprof (CUDA < 11)
-nvprof --metrics achieved_occupancy,gld_efficiency ./bin/kmeans_cuda data/ 8 20
-
-# Nsight Compute (CUDA >= 11)
-ncu --metrics sm__throughput.avg.pct_of_peak_sustained_elapsed \
-    ./bin/kmeans_cuda data/ 8 20
-
-# CPU profiling dengan perf
-perf stat -e cache-misses,cache-references,instructions \
-    ./bin/kmeans_omp data/ 8 50
-```
 Jika tidak punya GPU — gunakan Google Colab (gratis):
 1. Buka: https://colab.research.google.com
 2. Runtime → Change runtime type → GPU (T4)
