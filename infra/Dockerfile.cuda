@@ -1,0 +1,79 @@
+# ============================================================
+# Dockerfile.cuda — Build image untuk CUDA K-Means
+# ============================================================
+# Base image: NVIDIA CUDA 12.2 + Ubuntu 22.04
+# Membutuhkan: nvidia-docker2 atau Docker >= 19.03 dengan
+#              --gpus all flag
+#
+# Build : docker build -f Dockerfile.cuda -t kmeans-cuda .
+# Run   : docker run --gpus all -v /data:/data kmeans-cuda
+# ============================================================
+
+# ── Stage 1: Builder ─────────────────────────────────────────
+FROM nvidia/cuda:12.2.0-devel-ubuntu22.04 AS builder
+
+LABEL description="CUDA K-Means builder (sm_75/sm_80/sm_86)"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    python3 \
+    python3-pip \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy CUDA source
+COPY src/cuda/ cuda/
+
+# Compile untuk beberapa arsitektur GPU (Turing, Ampere, Ada)
+# -gencode arch=compute_XX,code=sm_XX:
+#   compute_75 = Turing  (RTX 2000 series, T4)
+#   compute_80 = Ampere  (A100, RTX 3000 series)
+#   compute_86 = Ampere  (RTX 3080/3090)
+#   compute_89 = Ada     (RTX 4000 series)
+RUN nvcc -O3 -std=c++17 \
+    -gencode arch=compute_75,code=sm_75 \
+    -gencode arch=compute_80,code=sm_80 \
+    -gencode arch=compute_86,code=sm_86 \
+    -gencode arch=compute_89,code=sm_89 \
+    --ptxas-options=-v \
+    -lineinfo \
+    -o /usr/local/bin/kmeans_cuda \
+    cuda/kmeans_cuda.cu
+
+# ── Stage 2: Runtime ─────────────────────────────────────────
+FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04 AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    curl \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir psutil prometheus-client
+
+# Copy binary dari builder
+COPY --from=builder /usr/local/bin/kmeans_cuda /usr/local/bin/
+
+COPY scripts/ /app/scripts/
+
+WORKDIR /app
+
+# Environment variables
+ENV KMEANS_K=8
+ENV KMEANS_MAX_ITER=100
+ENV DATA_PATH=/data/nyc_taxi.csv
+ENV CUDA_VISIBLE_DEVICES=0
+
+# Port monitoring
+EXPOSE 9100
+EXPOSE 8080
+
+COPY scripts/entrypoint_cuda.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

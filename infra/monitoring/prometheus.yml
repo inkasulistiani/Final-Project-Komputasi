@@ -1,0 +1,93 @@
+# ============================================================
+# prometheus.yml — Konfigurasi Prometheus Monitoring
+# ============================================================
+# Prometheus akan scrape (ambil metrik) dari target-target ini
+# setiap 15 detik dan simpan di time-series database (TSDB).
+# ============================================================
+
+global:
+  scrape_interval:     15s   # Ambil metrik setiap 15 detik
+  evaluation_interval: 15s   # Evaluasi alerting rules setiap 15 detik
+  scrape_timeout:      10s   # Timeout per scrape
+
+  # Label yang ditambahkan ke SEMUA metrik dari instance ini
+  external_labels:
+    project: 'kmeans-experiment'
+    env: 'local'
+
+# ── Alerting (opsional, kirim ke email/Slack) ────────────────
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []   # Kosong = tidak kirim alert
+
+# ── Scrape Targets ───────────────────────────────────────────
+scrape_configs:
+
+  # Prometheus monitoring dirinya sendiri
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Node Exporter: metrik CPU, memory, disk, network host
+  # Metrik penting untuk eksperimen kita:
+  #   node_cpu_seconds_total     → CPU utilization per core
+  #   node_memory_MemAvailable   → Available memory
+  #   node_network_transmit_bytes_total → Network throughput antar node
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets:
+          - 'node-exporter:9100'    # Host utama
+          - 'spark-worker1:9100'    # Worker 1 (jika ada node-exporter)
+          - 'spark-worker2:9100'    # Worker 2
+          - 'spark-worker3:9100'    # Worker 3
+
+  # Spark JMX Exporter: metrik JVM Spark executor
+  # Metrik penting:
+  #   spark_executor_active_tasks       → Task paralel aktif
+  #   spark_executor_shuffle_read_bytes → Shuffle traffic antar node
+  #   jvm_memory_bytes_used             → JVM heap usage
+  - job_name: 'spark-jmx'
+    static_configs:
+      - targets:
+          - 'spark-master:9090'     # Driver JMX
+          - 'spark-worker1:9404'    # Worker 1 JMX
+          - 'spark-worker2:9405'    # Worker 2 JMX
+          - 'spark-worker3:9406'    # Worker 3 JMX
+    relabel_configs:
+      # Tambahkan label 'role' berdasarkan port
+      - source_labels: [__address__]
+        regex: '.*:9090'
+        target_label: role
+        replacement: 'driver'
+      - source_labels: [__address__]
+        regex: '.*:940[456]'
+        target_label: role
+        replacement: 'executor'
+
+  # Custom K-Means metrics exporter (dari script Python kita)
+  # Metrik yang kita expose:
+  #   kmeans_iteration_duration_seconds  → Waktu per iterasi
+  #   kmeans_throughput_points_per_sec   → Throughput
+  #   kmeans_wcss                        → WCSS (kualitas clustering)
+  #   kmeans_moved_points                → Titik yang berpindah cluster
+  - job_name: 'kmeans-app'
+    static_configs:
+      - targets:
+          - 'kmeans-cpu:8080'       # CPU/OpenMP metrics
+    metrics_path: '/metrics'
+    scrape_interval: 5s   # Lebih sering karena eksperimen singkat
+
+  # NVIDIA GPU Exporter (jika ada GPU)
+  # Metrik penting:
+  #   DCGM_FI_DEV_GPU_UTIL          → GPU utilization (%)
+  #   DCGM_FI_DEV_MEM_COPY_UTIL     → Memory bandwidth utilization
+  #   DCGM_FI_DEV_SM_CLOCK          → SM clock frequency
+  #   DCGM_FI_DEV_POWER_USAGE       → Power consumption (Watt)
+  - job_name: 'dcgm-exporter'
+    static_configs:
+      - targets:
+          - 'kmeans-gpu:9400'       # DCGM exporter port
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: gpu_host

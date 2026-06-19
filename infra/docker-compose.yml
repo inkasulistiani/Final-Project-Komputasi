@@ -1,0 +1,182 @@
+# ============================================================
+# docker-compose.yml — Local 3-Node Testing Environment
+# ============================================================
+# Arsitektur:
+#   spark-master  : Spark Master + Driver (1 node)
+#   spark-worker1 : Executor node 1
+#   spark-worker2 : Executor node 2  (minimal 3 node)
+#   spark-worker3 : Executor node 3
+#   prometheus    : Metrics collector
+#   grafana       : Dashboard visualisasi
+#
+# Jalankan: docker-compose up -d
+# Scale   : docker-compose up -d --scale spark-worker=5
+# Stop    : docker-compose down -v
+# ============================================================
+
+# ── Network (isolated bridge network) ───────────────────────
+networks:
+  kmeans_net:
+    driver: bridge
+
+# ── Volumes (persistent storage) ────────────────────────────
+volumes:
+  data_volume:        # Dataset nyc_taxi.csv
+  results_volume:     # Output K-Means
+  prometheus_data:    # Prometheus TSDB
+  grafana_data:       # Grafana dashboards
+
+# ── Services ─────────────────────────────────────────────────
+services:
+
+  # ── Spark Master (Driver Node) ─────────────────────────────
+  spark-master:
+    image: apache/spark:3.5.5
+    container_name: spark-master
+    hostname: spark-master
+    environment:
+      - SPARK_NO_DAEMONIZE=true
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+    volumes:
+      - data_volume:/data
+      - results_volume:/results
+      - ../src:/app/src
+    networks:
+      - kmeans_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Spark Worker 1 ─────────────────────────────────────────
+  spark-worker1:
+    image: apache/spark:3.5.5
+    container_name: spark-worker1
+    hostname: spark-worker1
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    environment:
+      - SPARK_WORKER_MEMORY=2g
+      - SPARK_WORKER_CORES=2
+      - SPARK_NO_DAEMONIZE=true
+    ports:
+      - "8081:8081"
+    volumes:
+      - data_volume:/data
+      - results_volume:/results
+    networks:
+      - kmeans_net
+    restart: unless-stopped
+
+  # ── Spark Worker 2 ─────────────────────────────────────────
+  spark-worker2:
+    image: apache/spark:3.5.5
+    container_name: spark-worker2
+    hostname: spark-worker2
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    environment:
+      - SPARK_WORKER_MEMORY=2g
+      - SPARK_WORKER_CORES=2
+      - SPARK_NO_DAEMONIZE=true
+    ports:
+      - "8082:8081"
+    volumes:
+      - data_volume:/data
+      - results_volume:/results
+    networks:
+      - kmeans_net
+    restart: unless-stopped
+
+  # ── Spark Worker 3 ─────────────────────────────────────────
+  spark-worker3:
+    image: apache/spark:3.5.5
+    container_name: spark-worker3
+    hostname: spark-worker3
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    environment:
+      - SPARK_WORKER_MEMORY=2g
+      - SPARK_WORKER_CORES=2
+      - SPARK_NO_DAEMONIZE=true
+    ports:
+      - "8083:8081"
+    volumes:
+      - data_volume:/data
+      - results_volume:/results
+    networks:
+      - kmeans_net
+    restart: unless-stopped
+
+  # ── CPU Runner (Serial + OpenMP) ───────────────────────────
+  kmeans-cpu:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.cpu
+    container_name: kmeans-cpu
+    environment:
+      - OMP_NUM_THREADS=4
+      - KMEANS_K=8
+      - KMEANS_MAX_ITER=100
+      - DATA_PATH=/data/nyc_taxi.csv
+    volumes:
+      - data_volume:/data:ro
+      - results_volume:/results
+    networks:
+      - kmeans_net
+    profiles: ["cpu"]   # Hanya aktif dengan: docker-compose --profile cpu up
+
+  # ── Prometheus (Metrics Collector) ─────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+    networks:
+      - kmeans_net
+    restart: unless-stopped
+
+  # ── Grafana (Dashboard) ─────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: grafana
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=kmeans123
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - kmeans_net
+    restart: unless-stopped
+
+  # ── Node Exporter (CPU/Memory metrics tiap host) ───────────
+  node-exporter:
+    image: prom/node-exporter:v1.7.0
+    container_name: node-exporter
+    ports:
+      - "9100:9100"
+    networks:
+      - kmeans_net
+    restart: unless-stopped

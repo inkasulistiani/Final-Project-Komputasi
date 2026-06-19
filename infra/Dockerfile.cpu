@@ -1,0 +1,90 @@
+# ============================================================
+# Dockerfile.cpu — Build image untuk Serial & OpenMP
+# ============================================================
+# Base image: Ubuntu 22.04 LTS (Jammy) — stabil, banyak library
+# Stage 1: Builder  (compile C++ code)
+# Stage 2: Runtime  (image ringan untuk deployment)
+# ============================================================
+
+# ── Stage 1: Builder ─────────────────────────────────────────
+FROM ubuntu:22.04 AS builder
+
+LABEL maintainer="kmeans-project"
+LABEL description="Build environment: Serial + OpenMP K-Means"
+
+# Hindari prompt interaktif saat apt install
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install toolchain
+RUN apt-get update && apt-get install -y \
+    build-essential \       
+    g++-12 \               
+    libomp-dev \           
+    cmake \                
+    make \                 
+    python3 \              
+    python3-pip \          
+    curl \                 
+    git \                  
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Set g++-12 sebagai default
+RUN update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-12 100 \
+ && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12  100
+
+WORKDIR /build
+
+# Copy source code
+COPY src/serial/  serial/
+COPY src/openmp/  openmp/
+
+# Compile Serial
+RUN g++ -O3 -std=c++17 -o /usr/local/bin/kmeans_serial \
+        serial/kmeans_serial.cpp
+
+# Compile OpenMP
+RUN g++ -O3 -std=c++17 -fopenmp -march=native \
+        -o /usr/local/bin/kmeans_omp \
+        openmp/kmeans_omp.cpp
+
+# ── Stage 2: Runtime ─────────────────────────────────────────
+FROM ubuntu:22.04 AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Hanya install runtime dependencies (tidak butuh compiler)
+RUN apt-get update && apt-get install -y \
+    libgomp1 \     
+    python3 \      
+    python3-pip \  
+    prometheus-node-exporter \   
+    curl \         
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install Python monitoring tools
+RUN pip3 install --no-cache-dir psutil prometheus-client
+
+# Copy binary dari stage builder
+COPY --from=builder /usr/local/bin/kmeans_serial /usr/local/bin/
+COPY --from=builder /usr/local/bin/kmeans_omp    /usr/local/bin/
+
+# Copy scripts
+COPY scripts/ /app/scripts/
+
+WORKDIR /app
+
+# Environment variables (bisa di-override saat docker run)
+ENV OMP_NUM_THREADS=4
+ENV KMEANS_K=8
+ENV KMEANS_MAX_ITER=100
+ENV DATA_PATH=/data/nyc_taxi.csv
+ENV METRICS_OUTPUT=/app/metrics.csv
+
+# Expose port untuk Prometheus metrics scraping
+EXPOSE 9100   
+EXPOSE 8080   
+
+# Entry point: jalankan monitoring + eksekusi
+COPY scripts/entrypoint_cpu.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
