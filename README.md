@@ -149,10 +149,13 @@ Jika tidak punya GPU — gunakan Google Colab (gratis):
 2. Runtime → Change runtime type → GPU (T4)
 3. Upload file kmeans_cuda.cu, kmean_serial.cpp, dan nyc_taxi_2023.csv
 4. Di cell baru, ketik:
+   ```bash 
    !nvcc -O3 -arch=sm_75 -o kmeans_cuda kmeans_cuda.cu
    !./kmeans_cuda nyc_taxi_2023.csv 8 100
+   ```
 5. Bandingkan GPU vs CPU (Serial)
-# Compile serial
+   
+ ```bash  
 !g++ -O3 -std=c++17 -o kmeans_serial kmeans_serial.cpp
 
 import time, subprocess
@@ -189,6 +192,7 @@ print(f"  Serial : {t_serial:.2f}s")
 print(f"  CUDA   : {t_cuda:.2f}s")
 print(f"  Speedup: {t_serial/t_cuda:.1f}x")
 print("=" * 50)
+```
 
 ### Eksperimen 4: Multi-Node Spark
 
@@ -208,10 +212,6 @@ docker exec spark-master spark-submit \
 # Lihat Spark UI: http://localhost:8080
 # Lihat Grafana: http://localhost:3000 (admin/kmeans123)
 ```
-
----
-
----
 
 ## Monitoring
 
